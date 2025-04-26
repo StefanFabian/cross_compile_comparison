@@ -45,7 +45,7 @@ jobs:
             lsb-release \
             gnupg \
             equivs \
-            bloom \
+            python3-bloom \
             dpkg-dev \
             fakeroot # Added bloom, dpkg-dev, fakeroot
           # Initialize rosdep if not already done in the container
