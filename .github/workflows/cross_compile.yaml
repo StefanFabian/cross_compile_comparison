@@ -12,13 +12,10 @@ env:
 jobs:
   build_comparison:
     runs-on: ubuntu-latest
-    strategy: # Add strategy block
-      matrix:
-        ros_distro: [jazzy] # Define ros_distro here
     env: # Job-level env
-      ROS_DISTRO: ${{ matrix.ros_distro }} # Assign ROS_DISTRO from matrix
+      ROS_DISTRO: "jazzy"
     container: # Use a container with ROS tools pre-installed for easier dependency management
-      image: ros:${{ matrix.ros_distro }}-ros-base # Use matrix context here
+      image: ros:jazzy-ros-base # Use matrix context here
       options: --privileged # Needed for QEMU/binfmt and potentially chroot tools
 
     steps:
@@ -57,7 +54,8 @@ jobs:
           mkdir -p ros2_ws/src
           cd ros2_ws/src
           # Only clone the package we intend to build as a deb
-          git clone https://github.com/LOEWE-emergenCITY/ros_babel_fish.git ${PACKAGE_NAME}
+          git clone https://github.com/LOEWE-emergenCITY/ros_babel_fish.git
+          git clone https://github.com/StefanFabian/qml_ros2_plugin.git
           cd ../.. # Back to repo root
 
       - name: Initialize results.md and Artifact Dirs
