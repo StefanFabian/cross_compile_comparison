@@ -89,7 +89,7 @@ jobs:
 
           echo "| Native   | ${dep_duration}                     | ${build_duration}           | ${total_duration}           |" >> ../results.md
           # Move the generated deb
-          mv *.deb ../debs/native/
+          mv src/*.deb ../debs/native/
           # Clean up debian folder for next builds
           rm -rf src/${PACKAGE_NAME}/debian
           cd .. # Back to repo root
@@ -125,7 +125,7 @@ jobs:
 
           echo "| QEMU     | ${dep_duration}                     | ${build_duration}           | ${total_duration}           |" >> ../results.md
           # Move the generated deb
-          mv *.deb ../debs/qemu/
+          mv src/*.deb ../debs/qemu/
           # Clean up debian folder
           rm -rf src/${PACKAGE_NAME}/debian
           cd .. # Back to repo root
