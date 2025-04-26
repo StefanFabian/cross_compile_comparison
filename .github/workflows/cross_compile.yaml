@@ -101,12 +101,19 @@ jobs:
           echo "=== QEMU Emulated Debian Build (arm64) ==="
           # Add arm64 architecture
           dpkg --add-architecture arm64
-          # Add ports.ubuntu.com sources for arm64 before updating
+          # IMPORTANT: Restrict existing sources to amd64
+          # Modify main sources.list
+          sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          # Modify any existing files in sources.list.d (like ros2.list from the base image)
+          find /etc/apt/sources.list.d/ -type f -name "*.list" -exec sed -i 's/^deb /deb [arch=amd64] /' {} \;
+          # Add ports.ubuntu.com sources for arm64
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO} main restricted universe multiverse" > /etc/apt/sources.list.d/arm64.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-updates main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-security main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-backports main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
-          # Now update apt lists
+          # Add ROS sources specifically for arm64
+          echo "deb [arch=arm64] http://packages.ros.org/ros2/ubuntu ${UBUNTU_DISTRO} main" > /etc/apt/sources.list.d/ros2-arm64.list
+          # Now update apt lists - this should only fetch amd64 from standard repos and arm64 from ports/ros repos
           apt-get update
           # Install base arm64 dependencies and build tools
           # Note: dpkg-dev:arm64 might pull in many dependencies, ensure they resolve correctly from ports.
