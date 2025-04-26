@@ -1,0 +1,248 @@
+name: Cross-Compile Comparison
+
+env:
+  ROS_DISTRO: jazzy # Or choose another ROS 2 distribution
+  DEBIAN_FRONTEND: noninteractive # Avoid interactive prompts during apt installs
+  PACKAGE_NAME: qml_ros2_plugin # Focus on one package for debianization
+  UBUNTU_DISTRO: noble
+
+jobs:
+  build_comparison:
+    runs-on: ubuntu-latest
+    container: # Use a container with ROS tools pre-installed for easier dependency management
+      image: ros:${ROS_DISTRO}-ros-base
+      options: --privileged # Needed for QEMU/binfmt and potentially chroot tools
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main_repo # Checkout the workflow repo itself
+
+      - name: Apt update and install prerequisites
+        run: |
+          apt-get update
+          apt-get install -y \
+            git \
+            build-essential \
+            python3-colcon-common-extensions \
+            python3-rosdep \
+            debootstrap \
+            devscripts \
+            pbuilder \
+            sbuild \
+            qemu-user-static \
+            binfmt-support \
+            wget \
+            lsb-release \
+            gnupg \
+            equivs \
+            bloom \
+            dpkg-dev \
+            fakeroot # Added bloom, dpkg-dev, fakeroot
+          # Initialize rosdep if not already done in the container
+          rosdep init || echo "rosdep already initialized"
+          rosdep update
+
+      - name: Create ROS Workspace and Clone Repos
+        run: |
+          mkdir -p ros2_ws/src
+          cd ros2_ws/src
+          # Only clone the package we intend to build as a deb
+          git clone https://github.com/LOEWE-emergenCITY/ros_babel_fish.git ${PACKAGE_NAME}
+          cd ../.. # Back to repo root
+
+      - name: Initialize results.md and Artifact Dirs
+        run: |
+          echo "# Debian Package Build Timings (${ROS_DISTRO} / ${PACKAGE_NAME})" > results.md
+          echo "" >> results.md
+          echo "| Method   | Dependency Install Time (s) | Build Time (s) | Total Time (s) |" >> results.md
+          echo "|----------|-----------------------------|----------------|----------------|" >> results.md
+          mkdir -p debs/native debs/qemu debs/pbuilder debs/sbuild # Create directories for debs
+
+      # --- Native Debian Build (amd64) ---
+      - name: Native Debian Build (amd64)
+        run: |
+          echo "=== Native Debian Build (amd64) ==="
+          cd ros2_ws
+          start_dep=$(date +%s)
+          # Install build dependencies for the package
+          rosdep install --from-paths src --ignore-src -y --rosdistro $ROS_DISTRO -r --os=ubuntu:${UBUNTU_DISTRO}
+          end_dep=$(date +%s)
+          dep_duration=$((end_dep - start_dep))
+
+          start_build=$(date +%s)
+          cd src/${PACKAGE_NAME}
+          # Generate debian files
+          bloom-generate rosdebian --ros-distro $ROS_DISTRO .
+          # Build the debian package
+          dpkg-buildpackage -b -us -uc -aamd64
+          cd ../.. # Back to ros2_ws root
+          end_build=$(date +%s)
+          build_duration=$((end_build - start_build))
+          total_duration=$((end_build - start_dep))
+
+          echo "| Native   | ${dep_duration}                     | ${build_duration}           | ${total_duration}           |" >> ../results.md
+          # Move the generated deb
+          mv *.deb ../debs/native/
+          # Clean up debian folder for next builds
+          rm -rf src/${PACKAGE_NAME}/debian
+          cd .. # Back to repo root
+
+      # --- QEMU Emulated Debian Build (arm64) ---
+      - name: QEMU Emulated Debian Build (arm64)
+        run: |
+          echo "=== QEMU Emulated Debian Build (arm64) ==="
+          # Add arm64 architecture and update
+          dpkg --add-architecture arm64
+          apt-get update
+          # Install base arm64 dependencies and build tools
+          apt-get install -y crossbuild-essential-arm64 libssl-dev:arm64 dpkg-dev:arm64
+
+          cd ros2_ws
+          start_dep=$(date +%s)
+          # Attempt arm64 rosdep install - might be incomplete
+          # Install build deps for arm64. QEMU will be used for any post-install scripts.
+          rosdep install --from-paths src --ignore-src -y --rosdistro $ROS_DISTRO -r --os=ubuntu:${UBUNTU_DISTRO} --skip-keys "fastcdr rti-connext-dds-6.0.1" # Skip keys known to cause issues or install manually
+          end_dep=$(date +%s)
+          dep_duration=$((end_dep - start_dep))
+
+          start_build=$(date +%s)
+          cd src/${PACKAGE_NAME}
+          # Generate debian files
+          bloom-generate rosdebian --ros-distro $ROS_DISTRO .
+          # Build the arm64 debian package using QEMU
+          dpkg-buildpackage -b -us -uc -aarm64
+          cd ../.. # Back to ros2_ws root
+          end_build=$(date +%s)
+          build_duration=$((end_build - start_build))
+          total_duration=$((end_build - start_dep))
+
+          echo "| QEMU     | ${dep_duration}                     | ${build_duration}           | ${total_duration}           |" >> ../results.md
+          # Move the generated deb
+          mv *.deb ../debs/qemu/
+          # Clean up debian folder
+          rm -rf src/${PACKAGE_NAME}/debian
+          cd .. # Back to repo root
+
+      # --- Generate Source Package for pbuilder/sbuild ---
+      - name: Generate Source Package (arm64)
+        id: source_pkg
+        run: |
+          echo "=== Generating Source Package ==="
+          cd ros2_ws/src/${PACKAGE_NAME}
+          bloom-generate rosdebian --ros-distro $ROS_DISTRO .
+          # Create the source package (.dsc, .orig.tar.gz, .debian.tar.xz)
+          dpkg-source -b .
+          cd ../.. # Back to ros2_ws root
+          # Find the generated .dsc file
+          dsc_file=$(find . -maxdepth 1 -name "*.dsc")
+          echo "dsc_file=${dsc_file}" >> $GITHUB_OUTPUT
+          # Move source package files to a known location
+          mkdir -p source_package
+          mv *.dsc *.orig.tar.gz *.debian.tar.xz source_package/
+          # Clean up debian folder
+          rm -rf src/${PACKAGE_NAME}/debian
+          cd .. # Back to repo root
+
+      # --- pbuilder Build (arm64) ---
+      - name: pbuilder Setup (arm64)
+        run: |
+          echo "=== pbuilder Setup (arm64) ==="
+          # Configure pbuilder for arm64
+          cat << EOF > ~/.pbuilderrc
+          ARCHITECTURE="arm64"
+          DISTRIBUTION="${UBUNTU_DISTRO}" # Use Ubuntu distro name
+          COMPONENTS="main restricted universe multiverse"
+          OTHERMIRROR="deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO} main restricted universe multiverse | deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-updates main restricted universe multiverse | deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-security main restricted universe multiverse | deb [trusted=yes] http://packages.ros.org/ros2/ubuntu ${UBUNTU_DISTRO} main"
+          # Add ROS 2 GPG key and essential build tools via hook
+          HOOKDIR="/etc/pbuilder/hooks"
+          mkdir -p \$HOOKDIR
+          cat << 'EOH' > \$HOOKDIR/D50ros-setup
+          #!/bin/sh
+          set -e
+          # Add ROS GPG Key
+          wget https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -O /tmp/ros.key
+          apt-key add /tmp/ros.key
+          # Update and install build essentials and ROS tools
+          apt-get update
+          apt-get install -y eatmydata # Speed up apt operations
+          eatmydata apt-get install -y build-essential devscripts equivs wget # Basic build tools
+          # Install ROS build tools - adjust if needed based on bloom-generated deps
+          eatmydata apt-get install -y python3-rosdep python3-colcon-common-extensions ros-${ROS_DISTRO}-ros-dev-tools
+          EOH
+          chmod +x \$HOOKDIR/D50ros-setup
+          EOF
+          # Create/Update the pbuilder chroot
+          eatmydata pbuilder --create --configfile ~/.pbuilderrc || eatmydata pbuilder --update --configfile ~/.pbuilderrc
+
+      - name: pbuilder Build (arm64)
+        run: |
+          echo "=== pbuilder Build (arm64) ==="
+          cd source_package # Go where the .dsc file is
+          start_build=$(date +%s)
+          # Build the .dsc package using pbuilder
+          eatmydata pbuilder --build --configfile ~/.pbuilderrc ${{ steps.source_pkg.outputs.dsc_file }}
+          end_build=$(date +%s)
+          build_duration=$((end_build - start_build))
+          dep_duration="N/A"
+          total_duration=${build_duration}
+
+          echo "| pbuilder | ${dep_duration}                     | ${build_duration}           | ${total_duration}           |" >> ../results.md
+          # Move the generated deb from pbuilder's result location
+          find /var/cache/pbuilder/result/ -name "*.deb" -exec mv {} ../debs/pbuilder/ \;
+          cd .. # Back to repo root
+
+      # --- sbuild Build (arm64) ---
+      - name: sbuild Setup (arm64)
+        run: |
+          echo "=== sbuild Setup (arm64) ==="
+          export CHROOT_NAME="${UBUNTU_DISTRO}-arm64-sbuild"
+          export ARCH="arm64"
+          export DISTRO="${UBUNTU_DISTRO}"
+          # Create sbuild chroot if it doesn't exist
+          if [ ! -d "/srv/chroot/${CHROOT_NAME}" ]; then
+            eatmydata sbuild-createchroot --arch=${ARCH} --make-sbuild-tarball=/srv/chroot/${CHROOT_NAME}.tar.gz ${DISTRO} /srv/chroot/${CHROOT_NAME} http://ports.ubuntu.com/ubuntu-ports
+          fi
+          # Add ROS2 repo and key to sbuild chroot configuration
+          ROS_SOURCE_LINE="deb [arch=arm64] http://packages.ros.org/ros2/ubuntu ${DISTRO} main"
+          SBUILD_SOURCES_LIST="/etc/sbuild/chroot/${CHROOT_NAME}/etc/apt/sources.list.d/ros2.list"
+          SBUILD_KEY_FILE="/etc/sbuild/chroot/${CHROOT_NAME}/etc/apt/trusted.gpg.d/ros.asc"
+
+          if ! grep -qF "${ROS_SOURCE_LINE}" "${SBUILD_SOURCES_LIST}" 2>/dev/null; then
+              echo "${ROS_SOURCE_LINE}" | tee "${SBUILD_SOURCES_LIST}"
+              wget https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -O - | tee "${SBUILD_KEY_FILE}"
+              eatmydata sbuild-update --update --dist-upgrade --arch=${ARCH} ${CHROOT_NAME}
+          else
+              echo "ROS repo already configured for sbuild chroot ${CHROOT_NAME}."
+          fi
+
+      - name: sbuild Build (arm64)
+        run: |
+          echo "=== sbuild Build (arm64) ==="
+          export CHROOT_NAME="${UBUNTU_DISTRO}-arm64-sbuild"
+          cd source_package # Go where the .dsc file is
+          start_build=$(date +%s)
+          sbuild --arch=arm64 --chroot=${CHROOT_NAME} -A -d ${UBUNTU_DISTRO} ${{ steps.source_pkg.outputs.dsc_file }}
+          end_build=$(date +%s)
+          build_duration=$((end_build - start_build))
+          dep_duration="N/A"
+          total_duration=${build_duration}
+
+          echo "| sbuild   | ${dep_duration}                     | ${build_duration}           | ${total_duration}           |" >> ../results.md
+          mv *.deb ../debs/sbuild/
+          cd .. # Back to repo root
+
+      - name: Upload Results Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-timing-results-${{ env.ROS_DISTRO }}-${{ env.PACKAGE_NAME }}
+          path: |
+            results.md
+            debs/ # Upload all generated debs
+
+      - name: Upload Source Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-package-${{ env.ROS_DISTRO }}-${{ env.PACKAGE_NAME }}
+          path: source_package/
