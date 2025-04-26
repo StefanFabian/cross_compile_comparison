@@ -97,17 +97,26 @@ jobs:
       # --- QEMU Emulated Debian Build (arm64) ---
       - name: QEMU Emulated Debian Build (arm64)
         run: |
+          set -ex # Add for debugging
           echo "=== QEMU Emulated Debian Build (arm64) ==="
-          # Add arm64 architecture and update
+          # Add arm64 architecture
           dpkg --add-architecture arm64
+          # Add ports.ubuntu.com sources for arm64 before updating
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO} main restricted universe multiverse" > /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-updates main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-security main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-backports main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
+          # Now update apt lists
           apt-get update
           # Install base arm64 dependencies and build tools
+          # Note: dpkg-dev:arm64 might pull in many dependencies, ensure they resolve correctly from ports.
           apt-get install -y crossbuild-essential-arm64 libssl-dev:arm64 dpkg-dev:arm64
 
           cd ros2_ws
           start_dep=$(date +%s)
           # Attempt arm64 rosdep install - might be incomplete
           # Install build deps for arm64. QEMU will be used for any post-install scripts.
+          # Explicitly tell rosdep about the OS/ARCH for cross-install attempt
           rosdep install --from-paths src --ignore-src -y --rosdistro $ROS_DISTRO -r --os=ubuntu:${UBUNTU_DISTRO} --skip-keys "fastcdr rti-connext-dds-6.0.1" # Skip keys known to cause issues or install manually
           end_dep=$(date +%s)
           dep_duration=$((end_dep - start_dep))
@@ -117,14 +126,15 @@ jobs:
           # Generate debian files
           bloom-generate rosdebian --ros-distro $ROS_DISTRO .
           # Build the arm64 debian package using QEMU
-          dpkg-buildpackage -b -us -uc -aarm64
+          # Use fakeroot for dpkg-buildpackage when not running as root (good practice)
+          fakeroot dpkg-buildpackage -b -us -uc -aarm64
           cd ../.. # Back to ros2_ws root
           end_build=$(date +%s)
           build_duration=$((end_build - start_build))
           total_duration=$((end_build - start_dep))
 
           echo "| QEMU     | ${dep_duration}                     | ${build_duration}           | ${total_duration}           |" >> ../results.md
-          # Move the generated deb
+          # Move the generated deb (dpkg-buildpackage places it in the parent dir, i.e., ros2_ws/)
           mv src/*.deb ../debs/qemu/
           # Clean up debian folder
           rm -rf src/${PACKAGE_NAME}/debian
