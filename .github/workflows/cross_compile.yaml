@@ -12,10 +12,13 @@ env:
 jobs:
   build_comparison:
     runs-on: ubuntu-latest
-    env: # Add job-level env
-      ROS_DISTRO: jazzy # Define ROS_DISTRO here
+    strategy: # Add strategy block
+      matrix:
+        ros_distro: [jazzy] # Define ros_distro here
+    env: # Job-level env
+      ROS_DISTRO: ${{ matrix.ros_distro }} # Assign ROS_DISTRO from matrix
     container: # Use a container with ROS tools pre-installed for easier dependency management
-      image: ros:${{ env.ROS_DISTRO }}-ros-base # Use job-level env context
+      image: ros:${{ matrix.ros_distro }}-ros-base # Use matrix context here
       options: --privileged # Needed for QEMU/binfmt and potentially chroot tools
 
     steps:
