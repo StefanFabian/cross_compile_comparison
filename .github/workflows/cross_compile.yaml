@@ -54,7 +54,6 @@ jobs:
           mkdir -p ros2_ws/src
           cd ros2_ws/src
           # Only clone the package we intend to build as a deb
-          git clone https://github.com/LOEWE-emergenCITY/ros_babel_fish.git
           git clone https://github.com/StefanFabian/qml_ros2_plugin.git
           cd ../.. # Back to repo root
 
