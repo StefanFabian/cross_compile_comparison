@@ -111,8 +111,6 @@ jobs:
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-updates main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-security main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_DISTRO}-backports main restricted universe multiverse" >> /etc/apt/sources.list.d/arm64.list
-          # Add ROS sources specifically for arm64
-          echo "deb [arch=arm64] http://packages.ros.org/ros2/ubuntu ${UBUNTU_DISTRO} main" > /etc/apt/sources.list.d/ros2-arm64.list
           # Now update apt lists - this should only fetch amd64 from standard repos and arm64 from ports/ros repos
           apt-get update
           # Install base arm64 dependencies and build tools
