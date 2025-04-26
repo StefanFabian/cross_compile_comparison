@@ -1,5 +1,9 @@
 name: Cross-Compile Comparison
 
+on:
+  push:
+  workflow_dispatch: # Add this line to enable manual triggers
+
 env:
   ROS_DISTRO: jazzy # Or choose another ROS 2 distribution
   DEBIAN_FRONTEND: noninteractive # Avoid interactive prompts during apt installs
